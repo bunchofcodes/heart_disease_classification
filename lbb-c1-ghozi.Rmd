@@ -1,0 +1,239 @@
+---
+title: "Heart Disease Prediction with Logistic Regression and K-Nearest Neighbour"
+author: "Muhammad Asadullah Al Ghozi"
+date: "5/1/2021"
+output: 
+  html_document:
+    df_print: paged
+    theme: united
+    highlight: espresso
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, fig.align = "center", comment = "#>")
+options(scipen = 9999)
+```
+
+
+## Objective
+Objective of this project is to make predictions whether a patient in the hospital has heart disease or not using the logistic regression algorithm and the KNN. This notebook also wants to compare the performance of the two algorithms in this case. 
+
+## Libraries
+Before going any further, first of all, we have to setup libraries that might needed.
+```{r}
+library(ggplot2)
+library(dplyr)
+library(MLmetrics)
+library(gtools)
+library(caret)
+library(class)
+```
+
+## Data and Preparation
+
+### Input Data and Preparation
+
+With read.csv function we can easily import the data. After looking at the table, the first column name seems not correct, therefore I rename the first column name.
+```{r}
+heart <- read.csv(file = "heart.csv")
+names(heart)[names(heart) == "ï..age"] <- "age"
+```
+
+All data consist with numeric value. However, some variables are in categorical type, but represented in number. The next step is to convert `sex`, `cp`, `fbs`, `exang`, and `target`.   
+```{r}
+# Transforming data into Category
+
+heart <- heart %>% 
+  mutate_at(vars(target, exang, fbs, cp, sex), as.factor)
+glimpse(heart)
+```
+
+This data has 14 columns consist from several factors that predict the heart disease. Target variable in this data is `target` column. Details below:   
+1. Age : age   
+2. Sex : sex   
+3. chest pain type (4 values) : cp   
+4. Resting blood pressure : trestbps   
+5. Serum cholestoral in mg/dl : chol   
+6. Fasting blood sugar > 120 mg/dl : fbs   
+7. Resting electrocardiographic results (values 0,1,2) : restecg   
+8. Maximum heart rate achieved : thalach    
+9. Exercise induced angina : exang   
+10. Oldpeak = ST depression induced by exercise relative to rest : oldpeak   
+11.the slope of the peak exercise ST segment : slope   
+12. number of major vessels (0-3) colored by flourosopy : ca      
+13. thal: 3 = normal; 6 = fixed defect; 7 = reversable defect : thal    
+14 Target (1 or 0, Yes or No) : target
+
+
+This data has 303 rows and 14 columns
+
+```{r}
+dim(heart)
+```
+Checking the proportion of target variable, we can use `prop.table` function.
+
+```{r}
+data.frame(prop.table(table(heart$target)), table(heart$target))
+```
+From 303 data, there are 138 data of does not have heart disease, and 165 having heart disease. The proportion of target variable is 46% for no heart desease and 54% with heart disease.   
+
+```{r}
+# Cross validation
+
+RNGkind(sample.kind = "Rounding") 
+set.seed(198) 
+split <- sample(nrow(heart), nrow(heart)*0.80) # splitting 80:20 
+heart_train <- heart[split,] # 80% data train
+heart_test <- heart[-split, ] # 20% data test
+```
+
+```{r}
+# Target variable proportion table after splitting
+data.frame(prop.table(table(heart_train$target)))
+data.frame(prop.table(table(heart_test$target)))
+```
+The data splitted quite proportionally. Could be said that the difference is still tollerable.   
+
+## Logistic Regression
+
+### Modelling
+For making Logistic regression model, we use `glm()`, providing X and Y variable, test data, and specify the family is "binomial" (the target is binomial, 1 or 0, or Yes or No). After model is made, then I do the stepwise regression with `step()` and backward direction. Hopefully this model will perform better than ordinary Logistic Regression. 
+
+```{r}
+# Model Logistic Regression
+model_lr <- glm(formula = target~.,
+    data = heart_train,
+    family = "binomial")
+model_lr_back <- step(model_lr, direction = "backward", trace = F)
+summary(model_lr_back)
+```
+
+From the `summary(model_lr_back)`, most variables are significant, and others are not significant. 
+
+### Predicting
+
+Predicting logistic regression will result the probability number or logit. Type = "response" will give the probabilty, and "link" returns logit number. In order to categorize the probability number, we have to categorize it manually. In this case, I categorize probability greater than 0.5 as 1 (Heart disease), and other is 0 (No heart disease).   
+```{r}
+## Predicting with Logistic Regression
+pred_lr <- predict(model_lr_back, heart_test, type = "response")
+pred_label <- ifelse(pred_lr > 0.5,"1","0")
+pred_label <- as.factor(pred_label)
+```
+
+
+### Model Evaluation
+
+```{r}
+## Logistic Regression
+eval_lr <- confusionMatrix(pred_label, heart_test$target, positive = "1" )
+eval_lr
+```
+
+From the confusion matrix, we conclude that this model has quite good percormance predicting 1 (Have heart disease) class with Sensitivity 0.9032. This model want to predict the heart disease class stritcly, to avoid missed-treatment of giving healthy patient with heart disease medication.    
+
+## K-Nearest Neighbour
+
+KNN is known as an algorithm that could predict classification with predictor in numerical values. This algorithm will count the euclidian distance. Although the categorical variable is presented in numeric, but those variable is not suitable. Therefore, in KNN model I merely select numeric variables and use it to predict heart disease.
+
+### Data Preparation
+```{r}
+# Data Preparation
+heart_knn <- heart %>% 
+  select(-c(sex, cp, fbs, restecg, exang))
+```
+
+### Data Scaling
+
+After selecting only numeric values, there still another problem. From the data, we could see different number like `tresbps` with hundreds, but `oldpeak` with small number. Unequal distance between predictor variables will make one variable very dominant compared to other variables. Therefore, before making the KNN model, the predictor variables used must be scaled.   
+
+Scaling will use Z-score Standarization with function `scale()`. Z-score Standarization will subtract every x value with mean, and divide with standard deviation. First, the whole data is splitted with 80% data for training, and 20% data for testing. Second, the train data is scaled. After that test data is scaled with mean and standard deviation from training data. For selecting the best fit K, I use square root from train data for starting point.   
+
+```{r}
+# Cross validation
+RNGkind(sample.kind = "Rounding")
+set.seed(234) # mengunci random yang dihasilkan oleh fungsi sample
+split <- sample(nrow(heart_knn), nrow(heart_knn)*0.80) # 80% persen data
+data_train_knn <- heart_knn[split,] # 80% data train
+data_test_knn <- heart_knn[-split, ] # 20% data test
+
+# Scaling
+# Selecting X from train data (except target column)
+heart_x_train <- data_train_knn %>% select(-target) %>% scale()
+
+# Selecting Y (target) from train data
+heart_y_train <- data_train_knn %>% select(target)
+
+# Scale the X of test data with mean and sd of train data
+heart_x_test <- data_test_knn %>%
+  select(-target) %>% 
+  scale(center = attr(heart_x_train, "scaled:center"), # center = mean
+        scale = attr(heart_x_train, "scaled:scale")) # scale = standard deviation
+
+# Selecting Y (target) from testing data
+heart_y_test <- data_test_knn %>% select(target)
+
+# Defining K
+sqrt(nrow(heart_x_train))
+```
+K options = 15, 13, 17
+
+
+### Modeling
+```{r}
+# KNN Modeling
+
+model_knn <- knn(train = heart_x_train,
+                 test  = heart_x_test,
+                 cl = heart_y_train$target,
+                 k = 15)
+```
+
+KNN model in R is quite short, just 1 line of code and the KNN model is set. With `knn()` function, give the train data, test data, class that want to predict, and number of k.
+
+### Model Evaluation
+
+It is similar with logistic regression, I use `confusionMatrix()` function to evaluate the accuracy and other method of evaluation. I give the positive class is 1. Positive class is the class that we want to predict or concentrated in.
+```{r}
+## KNN
+eval_knn <- confusionMatrix(model_knn, heart_y_test$target, positive = "1" )
+eval_knn
+```
+
+
+## Conclusion
+
+```{r}
+table_lr <- data_frame(Accuracy = round(eval_lr$overall[1],3),
+           Recall = round(eval_lr$byClass[1],3),
+           Specificity = round(eval_lr$byClass[2],3),
+           Precision = round(eval_lr$byClass[3],3))
+
+table_knn <- data_frame(Accuracy = round(eval_knn$overall[1],3),
+           Recall = round(eval_knn$byClass[1],3),
+           Specificity = round(eval_knn$byClass[2],3),
+           Precision = round(eval_knn$byClass[3],3))
+```
+
+```{r}
+table_lr
+```
+
+```{r}
+table_knn
+```
+
+By comparing evaluation table of logistic regression and KNN, Logistic Regression has higher score on Accuracy, Recall, Specificity and Precision. In this case, because the goal of this model is to predict the Heart disease class, Recall is suitable as reference to compare both models. Logistic Regression has better Recall score than KNN model to predict Heart disease class.
+
+
+
+
+
+
+
+
+
+
+
+
